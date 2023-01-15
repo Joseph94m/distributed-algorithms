@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/go-zookeeper/zk"
@@ -18,10 +19,16 @@ const (
 
 var (
 	conn *zk.Conn
+	data []byte
 )
 
 func main() {
 	var err error
+	dataS, err := getNodeHostName()
+	if err != nil {
+		return
+	}
+	data = []byte(dataS)
 	conn, _, err = zk.Connect([]string{"zk1:2181", "zk2:2181", "zk3:2181"}, zkTimeout)
 	if err != nil {
 		fmt.Println(err)
@@ -82,7 +89,10 @@ func leaderElection(mainCtx context.Context) {
 			}
 		}
 	}
+}
 
+func getNodeHostName() (string, error) {
+	return os.Hostname()
 }
 
 func tryBecomeLeader() error {
@@ -94,7 +104,7 @@ func tryBecomeLeader() error {
 		return zk.ErrNodeExists
 	}
 	// add unique identifier to node's data
-	_, err = conn.Create(zkPath, nil, zk.FlagEphemeral, zk.WorldACL(zk.PermAll))
+	_, err = conn.Create(zkPath, []byte(data), zk.FlagEphemeral, zk.WorldACL(zk.PermAll))
 	if err != nil {
 		return err
 	}
@@ -110,7 +120,7 @@ func leaderLeaseRenewal(ctx context.Context, cancel context.CancelFunc) {
 			return
 		case <-ticker.C:
 			//renew the lease
-			_, err := conn.Set(zkPath, nil, -1)
+			_, err := conn.Set(zkPath, data, -1)
 			if err != nil {
 				fmt.Println(err)
 				return
