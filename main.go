@@ -30,11 +30,11 @@ func main() {
 	defer conn.Close()
 	mainCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go monitorConnection(mainCtx, cancel, conn)
+	go monitorConnection(mainCtx, cancel)
 	leaderElection(mainCtx)
 }
 
-func monitorConnection(mainCtx context.Context, cancel context.CancelFunc, conn *zk.Conn) {
+func monitorConnection(mainCtx context.Context, cancel context.CancelFunc) {
 	defer cancel()
 	var err error
 	ticker := time.NewTicker(time.Second * 2)
