@@ -60,6 +60,7 @@ func monitorConnection(mainCtx context.Context, cancel context.CancelFunc, conn 
 func leaderElection(mainCtx context.Context) {
 	var ctx context.Context
 	var cancel context.CancelFunc
+	ticker := time.NewTicker(electionSleep)
 	for {
 		select {
 		case <-mainCtx.Done():
@@ -67,8 +68,7 @@ func leaderElection(mainCtx context.Context) {
 				cancel()
 			}
 			return
-		default:
-			//try to become leader
+		case <-ticker.C:
 			err := tryBecomeLeader()
 			if err == nil {
 				//create context for leader lease renewal
@@ -77,15 +77,12 @@ func leaderElection(mainCtx context.Context) {
 				go leaderLeaseRenewal(ctx, cancel)
 				startLeaderWork(ctx, cancel)
 				cancel()
-			} else {
-				//if the node already exists, then we are not the leader
-				if err == zk.ErrNodeExists {
-					fmt.Println("Leader already exists. Could be me or someone else")
-				}
+			} else if err == zk.ErrNodeExists {
+				fmt.Println("Leader already exists. Could be me or someone else")
 			}
-			time.Sleep(electionSleep)
 		}
 	}
+
 }
 
 func tryBecomeLeader() error {
@@ -106,18 +103,18 @@ func tryBecomeLeader() error {
 
 func leaderLeaseRenewal(ctx context.Context, cancel context.CancelFunc) {
 	defer cancel()
+	ticker := time.NewTicker(leaderLease / 2)
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		default:
+		case <-ticker.C:
 			//renew the lease
 			_, err := conn.Set(zkPath, nil, -1)
 			if err != nil {
 				fmt.Println(err)
 				return
 			}
-			time.Sleep(leaderLease / 2)
 		}
 	}
 }
