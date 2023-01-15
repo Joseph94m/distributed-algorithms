@@ -91,7 +91,7 @@ func tryBecomeLeader() error {
 		return err
 	}
 	if exists {
-		return fmt.Errorf("node already exists")
+		return zk.ErrNodeExists
 	}
 	// add unique identifier to node's data
 	_, err = conn.Create(zkPath, nil, zk.FlagEphemeral, zk.WorldACL(zk.PermAll))
@@ -103,7 +103,7 @@ func tryBecomeLeader() error {
 
 func leaderLeaseRenewal(ctx context.Context, cancel context.CancelFunc) {
 	defer cancel()
-	ticker := time.NewTicker(leaderLease / 2)
+	ticker := time.NewTicker(leaderLease / 3)
 	for {
 		select {
 		case <-ctx.Done():
