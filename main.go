@@ -37,11 +37,12 @@ func main() {
 func monitorConnection(mainCtx context.Context, cancel context.CancelFunc, conn *zk.Conn) {
 	defer cancel()
 	var err error
+	ticker := time.NewTicker(time.Second * 2)
 	for {
 		select {
 		case <-mainCtx.Done():
 			return
-		default:
+		case <-ticker.C:
 			if conn.State() != zk.StateConnected {
 				fmt.Println("Connection lost, re-establishing connection")
 				for {
@@ -52,7 +53,6 @@ func monitorConnection(mainCtx context.Context, cancel context.CancelFunc, conn 
 					time.Sleep(time.Second * 5)
 				}
 			}
-			time.Sleep(time.Second * 2)
 		}
 	}
 }
