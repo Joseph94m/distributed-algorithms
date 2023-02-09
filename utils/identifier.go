@@ -1,4 +1,4 @@
-package main
+package utils
 
 import (
 	"math/rand"
@@ -6,15 +6,15 @@ import (
 	"time"
 )
 
-func getUniqueIdentifier() (string, error) {
-	hostname, err := getHostname()
+func GetUniqueIdentifier() (string, error) {
+	hostname, err := GetHostname()
 	if err != nil {
 		return "", err
 	}
 	return hostname + "_" + randomString(5), nil
 }
 
-func getHostname() (string, error) {
+func GetHostname() (string, error) {
 	return os.Hostname()
 }
 

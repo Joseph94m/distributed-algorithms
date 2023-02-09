@@ -7,10 +7,11 @@ import (
 	"time"
 
 	"github.com/rs/zerolog/log"
+	"gitlab.mobile-intra.com/cloud-ops/distributed-algorithms/election"
 )
 
 func main() {
-	leaderElection := &LeaderElection{
+	leaderElection := &election.LeaderElection{
 		ZkPath:        "/election",
 		ZkTimeout:     time.Second * 5,
 		LeaderLease:   time.Second * 5,

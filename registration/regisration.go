@@ -1,10 +1,11 @@
-package main
+package registration
 
 import (
 	"fmt"
 	"time"
 
 	"github.com/go-zookeeper/zk"
+	"gitlab.mobile-intra.com/cloud-ops/distributed-algorithms/utils"
 )
 
 var (
@@ -14,7 +15,7 @@ var (
 )
 
 func register() {
-	dataS, err := getHostname()
+	dataS, err := utils.GetHostname()
 	if err != nil {
 		return
 	}

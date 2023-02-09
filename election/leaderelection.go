@@ -1,4 +1,4 @@
-package main
+package election
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-zookeeper/zk"
 	"github.com/rs/zerolog"
+	"gitlab.mobile-intra.com/cloud-ops/distributed-algorithms/utils"
 )
 
 type LeaderElection struct {
@@ -29,7 +30,7 @@ func (l *LeaderElection) StartElectionLoop() {
 	l.Log.Info().Msg("Starting leader election")
 	//set Data from the node hostname + random string if not provided
 	if l.Data != nil {
-		dataS, err := getUniqueIdentifier()
+		dataS, err := utils.GetUniqueIdentifier()
 		l.Log.Info().Msgf("Node hostname: %s", dataS)
 		if err != nil {
 			return
