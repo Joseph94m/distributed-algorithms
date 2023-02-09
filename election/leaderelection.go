@@ -41,7 +41,8 @@ type LeaderElection struct {
 	// IsLeader is a boolean that indicates if the node is the leader or not. This should be evaluated regularly by the calling program to determine what to do
 	IsLeader bool
 	// conn is the zookeeper connection and is shared across the functions
-	conn          *zk.Conn
+	conn *zk.Conn
+	// isLeaderMutex is a mutex that is used to lock the IsLeader variable
 	isLeaderMutex *sync.Mutex
 }
 
@@ -84,16 +85,17 @@ func (l *LeaderElection) StartElectionLoop() error {
 // every ElectionSleep time it will try to create the znode
 // if it succeeds, it will start the leaderLeaseRenewal function
 func (l *LeaderElection) leaderElection() {
-	var ctx context.Context
-	var cancel context.CancelFunc
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	var err error
 	var justClaimedLeadership bool
 	ticker := time.NewTicker(l.ElectionSleep)
+	// try to become leader every ElectionSleep time cycle, even if it is already the leader
 	for range ticker.C {
 		l.Log.Info().Msg("Trying to become leader")
 		justClaimedLeadership, err = l.tryBecomeLeader()
 		if err == nil {
-			//create context for leader lease renewal if we just claimed leadership or if the context was nil or cancelled
+			//create context for leader lease renewal if we just claimed leadership or if the context was nil or cancelled, meaning renewal was stopped
 			if justClaimedLeadership || ctx == nil || ctx.Err() != nil {
 				l.Log.Info().Msg("I just acquired leadership")
 				ctx, cancel = context.WithCancel(context.Background())
@@ -106,20 +108,16 @@ func (l *LeaderElection) leaderElection() {
 			l.IsLeader = true
 			l.isLeaderMutex.Unlock()
 		} else {
-			if cancel != nil {
-				cancel()
-			}
+			cancel()
+			l.isLeaderMutex.Lock()
+			l.IsLeader = false
+			l.isLeaderMutex.Unlock()
 			if err == zk.ErrNodeExists {
 				l.Log.Info().Msgf("Leader already exists and it's another node %s", err.Error())
 			} else {
 				l.Log.Info().Msgf("Error trying to become leader %s", err.Error())
 			}
 		}
-	}
-	// if the ticker is stopped, cancel the context
-	// TODO if the function is stopped, the context should be cancelled
-	if cancel != nil {
-		cancel()
 	}
 }
 
@@ -183,7 +181,7 @@ func (l *LeaderElection) leaderLeaseRenewal(ctx context.Context, cancel context.
 				l.Log.Info().Msgf("Leader lease data is not the same as mine: %s != %s", string(dat), string(l.Data))
 				return
 			}
-			//renew the lease
+			// renew the lease
 			_, err = l.conn.Set(l.ZkPath, l.Data, -1)
 			if err != nil {
 				l.Log.Info().Err(err).Msg("Failed to renew leader lease")
