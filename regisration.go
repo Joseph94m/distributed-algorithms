@@ -14,7 +14,7 @@ var (
 )
 
 func register() {
-	dataS, err := getNodeHostName()
+	dataS, err := getHostname()
 	if err != nil {
 		return
 	}
