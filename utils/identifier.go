@@ -11,14 +11,14 @@ func GetUniqueIdentifier() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return hostname + "_" + randomString(5), nil
+	return hostname + "_" + RandomString(5), nil
 }
 
 func GetHostname() (string, error) {
 	return os.Hostname()
 }
 
-func randomString(n int) string {
+func RandomString(n int) string {
 	var letter = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
 	b := make([]rune, n)
 	rand.Seed(time.Now().UnixNano())
