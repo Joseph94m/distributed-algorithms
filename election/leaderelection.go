@@ -2,192 +2,207 @@ package election
 
 import (
 	"context"
-	"sync"
+	"sort"
+	"strings"
 	"time"
 
+	backoff "github.com/cenkalti/backoff/v4"
 	"github.com/go-zookeeper/zk"
 	"github.com/rs/zerolog"
-	"gitlab.mobile-intra.com/cloud-ops/distributed-algorithms/utils"
 )
 
+// LeaderElection is the struct that will be used to configure the leader election
+// It is exported so that the calling program can configure it
+// Only
 type LeaderElection struct {
-	// ZkPath is the path to the znode in zookeeper that will be created and where the data will be stored
-	// The presence of the znode indicates that some node is the leader
-	// The data stored in the znode is the identifier of the node that is the leader
-	// A leader knows it is the leader if it can read the znode and the data in the znode is its own identifier
-	// or if it can Set the znode in the leaderLeaseRenewal function
-	ZkPath string
-	// ZkTimeout is the session timeout for the zookeeper connection.
-	// The provided session timeout sets the amount of time for which
-	// a session is considered valid after losing connection to a server. Within
-	// the session timeout it's possible to reestablish a connection to a different
-	// server and keep the same session. This is means any ephemeral nodes and
-	// watches are maintained.
+	// namespace is the namespace on zookeeper that will be used for the election. It must be created manually before the election can start
+	ZkNamespace string
+	// ZkTimeout is the timeout for the zookeeper connection and the session for the ephemeral znodes
 	ZkTimeout time.Duration
-	// LeaderLease is the time for which the leader will hold the leadership.
-	// On the zookeeper this sets the time for which the znode will be present
-	// If the leader is not able to renew the lease in this time, the znode will be deleted
-	// and the leader will lose the leadership, the first node that will be able to create the znode will become the new leader
-	LeaderLease time.Duration
-	// ElectionSleep is the time for which the node will sleep between each leadership claim attempt
-	ElectionSleep time.Duration
-	// Data is the data that will be stored in the znode
-	// If not provided, the data will be the hostname of the node + a random string
-	Data []byte
-	// Zookeepers is the list of zookeeper servers
+	// Zookeepers is a list of zookeeper servers that will be used for the election
 	Zookeepers []string
-	// Log is the logger that will be used, it is exported to allow for configuration
-	Log zerolog.Logger
+	// Log is logger that will be used. It is zerolog, it is exported to allow for configuration
+	// if you don't provide a logger, it will use the default logger
+	Log *zerolog.Logger
 	// IsLeader is a boolean that indicates if the node is the leader or not. This should be evaluated regularly by the calling program to determine what to do
 	IsLeader bool
+	// Backoff is the backoff strategy that will be used to retry the election
+	// The default value is an exponential backoff with a max elapsed time of 0 so it will retry forever
+	// Only the default value is tested
+	Backoff backoff.BackOff
 	// conn is the zookeeper connection and is shared across the functions
 	conn *zk.Conn
-	// isLeaderMutex is a mutex that is used to lock the IsLeader variable
-	isLeaderMutex *sync.Mutex
+	// connectionWatcher is the channel that will be used to watch for connection events
+	connectionWatcher <-chan zk.Event
+	// currentZnodeName is the name of the znode that the current node is using
+	currentZnodeName string
+	// leaderWatcher is the channel that will be used to watch for predecessor node events
+	watchPredecessor <-chan zk.Event
 }
 
 // Elect starts the leader election process based on the configuration provided in the struct
-func (l *LeaderElection) StartElectionLoop() error {
+func (l *LeaderElection) StartElectionLoop(ctx context.Context) error {
 	var err error
 	// perform validation on the configuration
 	err = l.validateConfig()
 	if err != nil {
 		return err
 	}
+	l.defaultConfig()
 	l.Log.Info().Msg("Starting leader election loop")
-	// set Data from the node hostname + random string if not provided
-	if l.Data == nil || len(l.Data) == 0 {
-		dataS, err := utils.GetUniqueIdentifier()
-		l.Log.Info().Msgf("Node hostname: %s", dataS)
-		if err != nil {
-			return err
-		}
-		l.Data = []byte(dataS)
-	}
 	// establsih connection to zookeeper, if it fails, the function will return
 	// if the connection is lost at any point after a succesful connection, it will infinitely try to reconnect
 	l.Log.Info().Msg("Connecting to zookeeper")
-	l.conn, _, err = zk.Connect(l.Zookeepers, l.ZkTimeout)
+	l.conn, l.connectionWatcher, err = zk.Connect(l.Zookeepers, l.ZkTimeout)
 	if err != nil {
 		l.Log.Info().Err(err).Msg("Failed connecting to zookeeper")
 		return err
 	}
-	// defer closing the connection
-	defer l.conn.Close()
-	// start the leader election loop
-	l.isLeaderMutex = &sync.Mutex{}
-	l.Log.Info().Msg("Starting leader election")
-	l.leaderElection()
+	// check namespace exists
+	l.Log.Info().Msg("Checking namespace exists")
+	exists, _, err := l.conn.Exists(l.ZkNamespace)
+	if err != nil {
+		l.Log.Info().Err(err).Msg("Failed to check if namespace exists")
+		return err
+	}
+	if !exists {
+		l.Log.Info().Msg("Namespace does not exist. You must create it")
+		return err
+	}
+	// start the leader election routine
+	go func(l *LeaderElection, ctx context.Context) {
+		// defer closing the connection
+		defer l.conn.Close()
+		var nextBackOff time.Duration
+		var lastretryTime time.Time
+		// start the election loop
+		for {
+			// reset the backoff if we haven't failed in a while
+			if time.Since(lastretryTime) > 10*time.Minute {
+				l.Backoff.Reset()
+			}
+			nextBackOff = l.Backoff.NextBackOff()
+			lastretryTime = time.Now()
+			l.Log.Info().Msgf("Time for next attempt %s", nextBackOff)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.NewTicker(nextBackOff).C:
+				l.Log.Info().Msg("Volunteering for candidate")
+				err = l.candidate()
+				if err != nil {
+					l.Log.Info().Err(err).Msg("Failed to volunteer for candidate")
+				}
+				err = l.reelectLeader()
+				if err != nil {
+					l.Log.Info().Err(err).Msg("Failed to re-elect leader")
+				}
+				err = l.processEvents()
+				if err != nil {
+					l.Log.Info().Err(err).Msg("Failed to process events")
+				}
+			}
+		}
+	}(l, ctx)
 	return nil
 }
 
-// leaderElection is the main loop that will try to become the leader
-// every ElectionSleep time it will try to create the znode
-// if it succeeds, it will start the leaderLeaseRenewal function
-func (l *LeaderElection) leaderElection() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	var err error
-	var justClaimedLeadership bool
-	ticker := time.NewTicker(l.ElectionSleep)
-	// try to become leader every ElectionSleep time cycle, even if it is already the leader
-	for range ticker.C {
-		l.Log.Info().Msg("Trying to become leader")
-		justClaimedLeadership, err = l.tryBecomeLeader()
-		if err == nil {
-			//create context for leader lease renewal if we just claimed leadership or if the context was nil or cancelled, meaning renewal was stopped
-			if justClaimedLeadership || ctx == nil || ctx.Err() != nil {
-				l.Log.Info().Msg("I just acquired leadership")
-				ctx, cancel = context.WithCancel(context.Background())
-				go l.leaderLeaseRenewal(ctx, cancel)
-			} else {
-				l.Log.Info().Msg("I am already the leader")
-			}
-			// lock access to the leader variable with a mutex
-			l.isLeaderMutex.Lock()
-			l.IsLeader = true
-			l.isLeaderMutex.Unlock()
-		} else {
-			cancel()
-			l.isLeaderMutex.Lock()
-			l.IsLeader = false
-			l.isLeaderMutex.Unlock()
-			if err == zk.ErrNodeExists {
-				l.Log.Info().Msgf("Leader already exists and it's another node %s", err.Error())
-			} else {
-				l.Log.Info().Msgf("Error trying to become leader %s", err.Error())
-			}
-		}
-	}
-}
-
-// tryBecomeLeader tries to create the znode, returns a boolean and an error
-// the boolean indicates whether the node became the leader or not during this specific attempt.
-// If the node was already the leader, it will return false and nil
-// If the node just became the leader, it will return true and nil
-// If the node failed to become the leader, it will return false and an error
-// --------------------
-// As for the workflow of the function, it will try to create the znode, if it succeeds, that means the node is the new leader
-// If it fails, it will check if the node already exists, if it does, it will fetch the data from the znode and check if it's its data
-// if it is, it means this node is still the leader, if it's not, it means another node is the leader
-func (l *LeaderElection) tryBecomeLeader() (bool, error) {
-	var path string
-	var err error
-	//TODO add configurable ACL
-	//TODO check what happens when path returned is different from the one provided
-	path, err = l.conn.Create(l.ZkPath, l.Data, zk.FlagEphemeral, zk.WorldACL(zk.PermAll))
+// candidate is the function that will volunteer the current node as a candidate for leader by creating an ephemeral znode with a sequential suffix
+func (l *LeaderElection) candidate() error {
+	l.Log.Info().Msg("Starting leader election")
+	l.conn.Create(l.ZkNamespace, []byte{}, 0, zk.WorldACL(zk.PermAll))
+	znodePrefix := l.ZkNamespace + "/c_"
+	znodeFullPath, err := l.conn.Create(znodePrefix, []byte{}, zk.FlagEphemeral+zk.FlagSequence, zk.WorldACL(zk.PermAll))
 	if err != nil {
-		// if the node already exists, it means that a leader already exists, must check if it's the same node
-		l.Log.Info().Err(err).Msgf("Failed to create node path %s at: %s with data %s", l.ZkPath, path, string(l.Data))
-		dat, _, err2 := l.conn.Get(l.ZkPath)
-		if err2 != nil {
-			l.Log.Info().Err(err2).Msgf("Failed to get node path %s at: %s", l.ZkPath, path)
-			return false, err2
-		}
-		l.Log.Info().Msgf("Node path %s at: %s has data %s", l.ZkPath, path, string(dat))
-		// if the data is the same, it means that this node is the leader
-		if string(dat) == string(l.Data) {
-			l.Log.Info().Msgf("Node was my metadata. I am the leader")
-			return false, nil
-		}
-		return false, err
+		l.Log.Info().Err(err).Msg("Failed to create znode")
+		return err
 	}
-	// if the node was created, it means that this node is the leader
-	l.Log.Info().Msgf("Created node path %s at: %s with data %s", l.ZkPath, path, string(l.Data))
-	return true, nil
+	l.currentZnodeName = strings.Replace(znodeFullPath, l.ZkNamespace+"/", "", 1)
+	return nil
 }
 
-// leaderLeaseRenewal is a function that will renew the leader lease every LeaderLease/3
-// if it fails to renew the lease, it will cancel the context it received from leaderElection and the node will no longer be the leader
-// cancelling the context will stop the leaderLeaseRenewal function
-// if for any reason the function returns, it will cancel the context, this is not currently useful but might be in the future if we want to add
-// more functions to the leaderElection loop
-func (l *LeaderElection) leaderLeaseRenewal(ctx context.Context, cancel context.CancelFunc) {
-	defer cancel()
-	ticker := time.NewTicker(l.LeaderLease / 3)
+// reelectLeader is the function that will re-elect the leader if the current node is not the leader
+// it will get the list of children and sort them, then check if the current node is the smallest
+// if it is, it will set the IsLeader flag to true, otherwise it will set it to false
+// it will also set the watchPredecessor channel to watch the predecessor node
+// if the predecessor node is deleted, it will trigger an event that will be processed in the processEvents function
+func (l *LeaderElection) reelectLeader() error {
+	l.Log.Info().Msg("Re-electing leader")
+	var predecessorName string
+	var children []string
+	var err error
+	var exists bool
+	l.watchPredecessor = nil
+	for !exists {
+		children, _, err = l.conn.Children(l.ZkNamespace)
+		if err != nil {
+			l.Log.Info().Err(err).Msg("Failed to get children")
+			return err
+		}
+		sort.Strings(children)
+		//the smallest child should be the leader
+		smallestChild := children[0]
+		if smallestChild == l.currentZnodeName {
+			l.Log.Info().Msg("I am the leader")
+			l.IsLeader = true
+			return nil
+		} else {
+			l.Log.Info().Msg("I am not the leader")
+			l.IsLeader = false
+			for _, child := range children {
+				if child == l.currentZnodeName {
+					break
+				}
+				//get the child before the current node
+				predecessorName = child
+			}
+			l.Log.Info().Msgf("Predecessor is %s", predecessorName)
+			// we need to watch the predecessor node because when it is deleted, we need to re-elect the leader
+			exists, _, l.watchPredecessor, err = l.conn.ExistsW(l.ZkNamespace + "/" + predecessorName)
+			if err != nil {
+				l.Log.Info().Err(err).Msg("Failed to get predecessor")
+				return err
+			}
+			//this means that the predecessor has been deleted between the time we got the children and the time we tried to watch it
+			if !exists {
+				l.Log.Info().Msg("Predecessor does not exist")
+				return nil
+			}
+		}
+	}
+	return nil
+}
+
+// processEvents is the function that will process events from the watchPredecessor channel and the connectionWatcher channel
+// if the event comes from the watchPredecessor channel, it will check if the predecessor has been deleted
+// if it has, it will re-elect the leader by calling the reelectLeader function
+// if the event comes from the connectionWatcher channel, it will check if the connection has been lost
+// if it has, it will exit the processEvents function and the leader election will be restarted with backoff retries
+func (l *LeaderElection) processEvents() error {
+	l.Log.Info().Msg("Processing events")
 	for {
 		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			// get the data from the znode
-			dat, _, err := l.conn.Get(l.ZkPath)
-			if err != nil {
-				l.Log.Info().Err(err).Msg("Failed to get leader lease")
-				return
+		case event := <-l.watchPredecessor:
+			l.Log.Info().Msgf("Received event from predecessor %v", event)
+			//TODO: check if the event for node deletion is actually received and if it
+			// is received check that it is only received for that node and not for all nodes
+			// also verifiy StateExpired
+			if event.Type == zk.EventNodeDeleted || event.State == zk.StateDisconnected || event.State == zk.StateExpired {
+				l.Log.Info().Msg("Predecessor deleted")
+				err := l.reelectLeader()
+				if err != nil {
+					l.Log.Info().Err(err).Msg("Failed to re-elect leader")
+					return err
+				}
 			}
-			// if the data is not the same, it means that another node is the leader
-			if string(dat) != string(l.Data) {
-				l.Log.Info().Msgf("Leader lease data is not the same as mine: %s != %s", string(dat), string(l.Data))
-				return
+		case event := <-l.connectionWatcher:
+			l.Log.Info().Msgf("Received event from connection watcher %v", event)
+			//TODO: check if the event for node deletion is actually received and if it
+			// is received check that it is only received for that node and not for all nodes
+			if event.State == zk.StateDisconnected || event.Type == zk.EventNodeDeleted {
+				l.Log.Info().Msg("Disconnected")
+				return nil
 			}
-			// renew the lease
-			_, err = l.conn.Set(l.ZkPath, l.Data, -1)
-			if err != nil {
-				l.Log.Info().Err(err).Msg("Failed to renew leader lease")
-				return
-			}
-			l.Log.Info().Msgf("Renewed leader lease at path: %s with data %s", l.ZkPath, string(l.Data))
 		}
 	}
 }
