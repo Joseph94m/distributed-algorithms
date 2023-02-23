@@ -16,17 +16,13 @@ var _ = Describe("Election", func() {
 		conn           *zk.Conn
 		err            error
 	)
-	BeforeAll(func() {
+
+	BeforeEach(func() {
 		//connect to zookeeper and create the namespace
 		conn, _, err = zk.Connect(Zookeepers, time.Second*5)
 		if err != nil {
 			panic(err)
 		}
-	})
-
-	BeforeEach(func() {
-		//connect to zookeeper and create the namespace
-		defer conn.Close()
 		conn.Delete(Namespace, -1)
 		_, err = conn.Create(Namespace, []byte{}, 0, zk.WorldACL(zk.PermAll))
 		if err != nil {
@@ -35,8 +31,8 @@ var _ = Describe("Election", func() {
 	})
 	AfterEach(func() {
 		leaderElection = nil
-		defer conn.Close()
 		err = deleteZNodeRecursively(conn, Namespace)
+		conn.Close()
 		if err != nil {
 			panic(err)
 		}
@@ -57,7 +53,6 @@ var _ = Describe("Election", func() {
 		})
 		It("That one running instance should become the leader", func() {
 			//connect to zookeeper, get znode children and verify that size is 1
-			defer conn.Close()
 			children, _, err := conn.Children(Namespace)
 			if err != nil {
 				panic(err)

@@ -81,7 +81,9 @@ func (l *LeaderElection) StartElectionLoop(ctx context.Context) error {
 			if time.Since(lastretryTime) > 10*time.Minute {
 				l.Backoff.Reset()
 			}
-			nextBackOff = l.Backoff.NextBackOff()
+			// wait for the next retry using the randomized exponential backoff with jitter
+			// minimum is l.ZkTimeout to allow for any sessions to expire
+			nextBackOff = l.ZkTimeout + l.Backoff.NextBackOff()
 			lastretryTime = time.Now()
 			l.Log.Info().Msgf("Time for next attempt %s", nextBackOff)
 			select {
@@ -91,15 +93,15 @@ func (l *LeaderElection) StartElectionLoop(ctx context.Context) error {
 				l.Log.Info().Msg("Volunteering for candidate")
 				err = l.candidate()
 				if err != nil {
-					l.Log.Info().Err(err).Msg("Failed to volunteer for candidate")
+					l.Log.Info().Err(err).Msgf("Failed to volunteer for candidate %s", err.Error())
 				}
 				err = l.reelectLeader()
 				if err != nil {
-					l.Log.Info().Err(err).Msg("Failed to re-elect leader")
+					l.Log.Info().Err(err).Msgf("Failed to re-elect leader %s", err.Error())
 				}
 				err = l.processEvents()
 				if err != nil {
-					l.Log.Info().Err(err).Msg("Failed to process events")
+					l.Log.Info().Err(err).Msgf("Failed to process events %s", err.Error())
 				}
 			}
 		}
@@ -110,7 +112,6 @@ func (l *LeaderElection) StartElectionLoop(ctx context.Context) error {
 // candidate is the function that will volunteer the current node as a candidate for leader by creating an ephemeral znode with a sequential suffix
 func (l *LeaderElection) candidate() error {
 	l.Log.Info().Msg("Starting leader election")
-	l.conn.Create(l.ZkNamespace, []byte{}, 0, zk.WorldACL(zk.PermAll))
 	znodePrefix := l.ZkNamespace + "/c_"
 	znodeFullPath, err := l.conn.Create(znodePrefix, []byte{}, zk.FlagEphemeral+zk.FlagSequence, zk.WorldACL(zk.PermAll))
 	if err != nil {
@@ -163,11 +164,6 @@ func (l *LeaderElection) reelectLeader() error {
 				l.Log.Info().Err(err).Msg("Failed to get predecessor")
 				return err
 			}
-			//this means that the predecessor has been deleted between the time we got the children and the time we tried to watch it
-			if !exists {
-				l.Log.Info().Msg("Predecessor does not exist")
-				return nil
-			}
 		}
 	}
 	return nil
@@ -184,10 +180,7 @@ func (l *LeaderElection) processEvents() error {
 		select {
 		case event := <-l.watchPredecessor:
 			l.Log.Info().Msgf("Received event from predecessor %v", event)
-			//TODO: check if the event for node deletion is actually received and if it
-			// is received check that it is only received for that node and not for all nodes
-			// also verifiy StateExpired
-			if event.Type == zk.EventNodeDeleted || event.State == zk.StateDisconnected || event.State == zk.StateExpired {
+			if event.Type == zk.EventNodeDeleted {
 				l.Log.Info().Msg("Predecessor deleted")
 				err := l.reelectLeader()
 				if err != nil {
@@ -197,9 +190,7 @@ func (l *LeaderElection) processEvents() error {
 			}
 		case event := <-l.connectionWatcher:
 			l.Log.Info().Msgf("Received event from connection watcher %v", event)
-			//TODO: check if the event for node deletion is actually received and if it
-			// is received check that it is only received for that node and not for all nodes
-			if event.State == zk.StateDisconnected || event.Type == zk.EventNodeDeleted {
+			if event.State == zk.StateDisconnected {
 				l.Log.Info().Msg("Disconnected")
 				return nil
 			}
