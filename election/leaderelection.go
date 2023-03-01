@@ -32,8 +32,8 @@ type LeaderElection struct {
 	Backoff backoff.BackOff
 	// Cancel is the cancel function for the context that will be used to cancel the election loop. You can safely use it to cancel the loop
 	Cancel context.CancelFunc
-	// ctx is the context that will be used to cancel the election loop
-	ctx context.Context
+	// Ctx is the context that will be used to cancel the election loop
+	Ctx context.Context
 	// conn is the zookeeper connection and is shared across the functions
 	conn *zk.Conn
 	// connectionWatcher is the channel that will be used to watch for connection events
@@ -91,7 +91,7 @@ func (l *LeaderElection) StartElectionLoop() error {
 			lastretryTime = time.Now()
 			l.Log.Info().Msgf("Time for next attempt %s", nextBackOff)
 			select {
-			case <-l.ctx.Done():
+			case <-l.Ctx.Done():
 				return
 			case <-time.NewTicker(nextBackOff).C:
 				l.Log.Info().Msg("Volunteering for candidate")
@@ -182,7 +182,7 @@ func (l *LeaderElection) processEvents() error {
 	l.Log.Info().Msg("Processing events")
 	for {
 		select {
-		case <-l.ctx.Done():
+		case <-l.Ctx.Done():
 			l.IsLeader = false
 			return nil
 		case event := <-l.watchPredecessor:

@@ -21,5 +21,5 @@ func (l *LeaderElection) defaultConfig() {
 	if l.Log == nil {
 		l.Log = &log.Logger
 	}
-	l.ctx, l.Cancel = context.WithCancel(context.Background())
+	l.Ctx, l.Cancel = context.WithCancel(context.Background())
 }
