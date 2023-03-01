@@ -2,16 +2,19 @@ package election_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/go-zookeeper/zk"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/format"
+	"gitlab.mobile-intra.com/cloud-ops/distributed-algorithms/election"
 )
 
 var (
 	Namespace  = "/election"
 	Zookeepers = []string{"127.0.0.1:2181"}
+	Timeout    = time.Second * 2
 )
 
 func TestTask(t *testing.T) {
@@ -24,20 +27,47 @@ var _ = BeforeSuite(func() {
 })
 
 func deleteZNodeRecursively(conn *zk.Conn, path string) error {
-	children, _, err := conn.Children(path)
-	if err != nil {
-		return err
-	}
+	children, _, _ := conn.Children(path)
+
 	for _, child := range children {
 		childPath := path + "/" + child
-		err = deleteZNodeRecursively(conn, childPath)
-		if err != nil {
-			return err
-		}
+		deleteZNodeRecursively(conn, childPath)
+
 	}
-	err = conn.Delete(path, -1)
-	if err != nil {
-		return err
-	}
+	conn.Delete(path, -1)
+
 	return nil
+}
+
+func defaultLeaderElection() *election.LeaderElection {
+	election := &election.LeaderElection{
+		ZkNamespace: Namespace,
+		ZkTimeout:   Timeout,
+		Zookeepers:  Zookeepers,
+	}
+	election.DefaultConfig()
+	return election
+}
+
+func createCandidates(number int) ([]*election.LeaderElection, []*zk.Conn, []<-chan zk.Event) {
+	var candidates []*election.LeaderElection
+	var connections []*zk.Conn
+	var connectionWatcher []<-chan zk.Event
+	var candidate *election.LeaderElection
+	var connection *zk.Conn
+	var watcher <-chan zk.Event
+	var err error
+	for number > 0 {
+		candidate = defaultLeaderElection()
+		connection, watcher, err = zk.Connect(candidate.Zookeepers, candidate.ZkTimeout)
+		if err != nil {
+			panic(err)
+		}
+		candidate.SetConn(connection)
+		candidates = append(candidates, candidate)
+		connections = append(connections, connection)
+		connectionWatcher = append(connectionWatcher, watcher)
+		number -= 1
+	}
+	return candidates, connections, connectionWatcher
 }
