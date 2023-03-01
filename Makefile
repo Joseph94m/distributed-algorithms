@@ -1,7 +1,9 @@
+##makefile is not currently used
 BIN?=bin
 NAME?=distributed-algorithms
 APP?=${BIN}/${NAME}
-PROJECT?=gitlab.mobile-intra.com/cloud/ops/distributed-algorithms
+REPO?=$(shell cat PROJECT.txt)
+PROJECT?=${REPO}/distributed-algorithms
 RELEASE?=$(shell cat VERSION.txt)
 ifeq ($(IS_CI),)
 IS_CI := "false"
@@ -14,7 +16,8 @@ COMMIT?=$(shell git rev-parse --short HEAD)
 BUILD_TIME?=$(shell date -u '+%Y-%m-%d_%H:%M:%S')
 LDFLAGS?="-s -w -X ${PROJECT}/version.Release=${RELEASE} -X ${PROJECT}/version.Commit=${COMMIT} -X ${PROJECT}/version.BuildTime=${BUILD_TIME}"
 $(info $$IS_CI is ${IS_CI})
-DOCKER_IMG?=docker.munic.io/cloud/ops/distributed-algorithms:${RELEASE}
+HUB?=$(shell cat hub.txt)
+DOCKER_IMG?=${HUB}/distributed-algorithms:${RELEASE}
 
 docker-build:
 	docker build --build-arg IS_CI=${IS_CI} --build-arg LDFLAGS=${LDFLAGS} -t ${DOCKER_IMG} .
