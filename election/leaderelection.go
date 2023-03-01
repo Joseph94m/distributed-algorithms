@@ -56,8 +56,8 @@ func (l *LeaderElection) preElection() error {
 	if err != nil {
 		return err
 	}
-	// establsih connection to zookeeper, if it fails, the function will return
-	// if the connection is lost at any point after a succesful connection, it will infinitely try to reconnect
+	// establish connection to zookeeper, if it fails, the function will return
+	// if the connection is lost at any point after a succesful connection, it will infinitely try to reconnect until the connection is closed
 	l.Log.Info().Msg("Connecting to zookeeper")
 	if l.conn != nil {
 		l.conn.Close()
@@ -98,8 +98,7 @@ func (l *LeaderElection) StartElectionLoopWithoutFailureReties() error {
 		// defer closing the connection
 		defer l.conn.Close()
 		defer l.Cancel()
-		// start the election loop
-
+		// start the election
 		l.Log.Info().Msg("Volunteering for candidate")
 		err = l.candidate()
 		if err != nil {
@@ -158,7 +157,7 @@ func (l *LeaderElection) StartElectionLoopWithFailureRetries() error {
 					l.Log.Info().Msg("Retrying election")
 					err = l.preElection()
 					if err != nil {
-						l.Log.Log().Err(err).Msg("Failed to preform pre-election tasks %s")
+						l.Log.Log().Err(err).Msg("Failed to preform pre-election tasks")
 						continue
 					}
 				}
