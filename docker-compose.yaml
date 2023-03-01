@@ -1,7 +1,8 @@
 #start zookeeper replicas=3
 version: "3.9"
 services:
-  zookeeper1:
+  #zookeeper is on his own, if you want replicas, you need to uncomment zookeeper1, zookeeper2, zookeeper3 and comment zookeeper
+  zookeeper:
     image: confluentinc/cp-zookeeper:7.3.1
     ports:
       - "2181:2181"
@@ -19,50 +20,72 @@ services:
       ZOOKEEPER_LEADER_PORT: 3888
       ZOOKEEPER_DATA_DIR: /data
       ZOOKEEPER_QUORUM_LISTEN_ON_ALL_IPS: "true"
-      ZOOKEEPER_SERVERS: "0.0.0.0:2888:3888;zookeeper2:12888:13888;zookeeper3:22888:23888"
-    # command: ["sh", "-c", "cat /etc/kafka/zookeeper.properties"]
+      ZOOKEEPER_SERVERS: "0.0.0.0:2888:3888"
     volumes:
-      - ./data/zookeeper1:/data
-      - ./data/zookeeper1/datalog:/datalog
-  zookeeper2:
-    image: confluentinc/cp-zookeeper:7.3.1
-    ports:
-      - "12181:12181"
-      - "12888:12888"
-      - "13888:13888"
-    environment:
-      JVMFLAGS: -Xmx256m -Xms256m
-      ZOOKEEPER_TICK_TIME: 2000
-      ZOOKEEPER_INIT_LIMIT: 10
-      ZOOKEEPER_SYNC_LIMIT: 5
-      ZOOKEEPER_SERVER_ID: 2
-      ZOOKEEPER_CLIENT_PORT: 12181
-      ZOOKEEPER_PEER_PORT: 12888
-      ZOOKEEPER_LEADER_PORT: 13888
-      ZOOKEEPER_DATA_DIR: /data
-      ZOOKEEPER_QUORUM_LISTEN_ON_ALL_IPS: "true"
-      ZOOKEEPER_SERVERS: "zookeeper1:2888:3888;0.0.0.0:12888:13888;zookeeper3:22888:23888"
-    volumes:
-      - ./data/zookeeper2:/data
-      - ./data/zookeeper2/datalog:/datalog
-  zookeeper3:
-    image: confluentinc/cp-zookeeper:7.3.1
-    ports:
-      - "22181:22181"
-      - "22888:22888"
-      - "23888:23888"
-    environment:
-      JVMFLAGS: -Xmx256m -Xms256m
-      ZOOKEEPER_TICK_TIME: 2000
-      ZOOKEEPER_INIT_LIMIT: 10
-      ZOOKEEPER_SYNC_LIMIT: 5
-      ZOOKEEPER_SERVER_ID: 3
-      ZOOKEEPER_CLIENT_PORT: 22181
-      ZOOKEEPER_PEER_PORT: 22888
-      ZOOKEEPER_LEADER_PORT: 23888
-      ZOOKEEPER_DATA_DIR: /data
-      ZOOKEEPER_QUORUM_LISTEN_ON_ALL_IPS: "true"
-      ZOOKEEPER_SERVERS: "zookeeper1:2888:3888;zookeeper2:12888:13888;0.0.0.0:22888:23888"
-    volumes:
-      - ./data/zookeeper3:/data
-      - ./data/zookeeper3/datalog:/datalog
+      - ./data/zookeeper:/data
+      - ./data/zookeeper/datalog:/datalog
+  # zookeeper1:
+  #   image: confluentinc/cp-zookeeper:7.3.1
+  #   ports:
+  #     - "2181:2181"
+  #     - "2888:2888"
+  #     - "3888:3888"
+  #     - "8080:8086"
+  #   environment:
+  #     JVMFLAGS: -Xmx256m -Xms256m
+  #     ZOOKEEPER_TICK_TIME: 2000
+  #     ZOOKEEPER_INIT_LIMIT: 10
+  #     ZOOKEEPER_SYNC_LIMIT: 5
+  #     ZOOKEEPER_SERVER_ID: 1
+  #     ZOOKEEPER_CLIENT_PORT: 2181
+  #     ZOOKEEPER_PEER_PORT: 2888
+  #     ZOOKEEPER_LEADER_PORT: 3888
+  #     ZOOKEEPER_DATA_DIR: /data
+  #     ZOOKEEPER_QUORUM_LISTEN_ON_ALL_IPS: "true"
+  #     ZOOKEEPER_SERVERS: "0.0.0.0:2888:3888;zookeeper2:12888:13888;zookeeper3:22888:23888"
+  #   # command: ["sh", "-c", "cat /etc/kafka/zookeeper.properties"]
+  #   volumes:
+  #     - ./data/zookeeper1:/data
+  #     - ./data/zookeeper1/datalog:/datalog
+  # zookeeper2:
+  #   image: confluentinc/cp-zookeeper:7.3.1
+  #   ports:
+  #     - "12181:12181"
+  #     - "12888:12888"
+  #     - "13888:13888"
+  #   environment:
+  #     JVMFLAGS: -Xmx256m -Xms256m
+  #     ZOOKEEPER_TICK_TIME: 2000
+  #     ZOOKEEPER_INIT_LIMIT: 10
+  #     ZOOKEEPER_SYNC_LIMIT: 5
+  #     ZOOKEEPER_SERVER_ID: 2
+  #     ZOOKEEPER_CLIENT_PORT: 12181
+  #     ZOOKEEPER_PEER_PORT: 12888
+  #     ZOOKEEPER_LEADER_PORT: 13888
+  #     ZOOKEEPER_DATA_DIR: /data
+  #     ZOOKEEPER_QUORUM_LISTEN_ON_ALL_IPS: "true"
+  #     ZOOKEEPER_SERVERS: "zookeeper1:2888:3888;0.0.0.0:12888:13888;zookeeper3:22888:23888"
+  #   volumes:
+  #     - ./data/zookeeper2:/data
+  #     - ./data/zookeeper2/datalog:/datalog
+  # zookeeper3:
+    # image: confluentinc/cp-zookeeper:7.3.1
+    # ports:
+    #   - "22181:22181"
+    #   - "22888:22888"
+    #   - "23888:23888"
+    # environment:
+    #   JVMFLAGS: -Xmx256m -Xms256m
+    #   ZOOKEEPER_TICK_TIME: 2000
+    #   ZOOKEEPER_INIT_LIMIT: 10
+    #   ZOOKEEPER_SYNC_LIMIT: 5
+    #   ZOOKEEPER_SERVER_ID: 3
+    #   ZOOKEEPER_CLIENT_PORT: 22181
+    #   ZOOKEEPER_PEER_PORT: 22888
+    #   ZOOKEEPER_LEADER_PORT: 23888
+    #   ZOOKEEPER_DATA_DIR: /data
+    #   ZOOKEEPER_QUORUM_LISTEN_ON_ALL_IPS: "true"
+    #   ZOOKEEPER_SERVERS: "zookeeper1:2888:3888;zookeeper2:12888:13888;0.0.0.0:22888:23888"
+    # volumes:
+    #   - ./data/zookeeper3:/data
+    #   - ./data/zookeeper3/datalog:/datalog

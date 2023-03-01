@@ -4,7 +4,6 @@ import (
 
 	// "fmt"
 
-	"context"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -16,10 +15,11 @@ func main() {
 		ZkNamespace: "/election",
 		ZkTimeout:   time.Second * 5,
 		Zookeepers:  []string{"127.0.0.1:2181", "127.0.0.1:12181", "127.0.0.1:22181"},
-		Log:         &log.Logger,
+		// Log:         &log.Logger,
 	}
-	ctx, _ := context.WithCancel(context.Background())
-	go leaderElection.StartElectionLoop(ctx)
+	go leaderElection.StartElectionLoop()
+	// ctxCancel := leaderElection.Cancel
+	// ctxCancel()
 	ticker := time.NewTicker(time.Second * 5)
 	for range ticker.C {
 		log.Info().Bool("isLeader", leaderElection.IsLeader).Msg("Is leader")
