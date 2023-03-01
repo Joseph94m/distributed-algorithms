@@ -17,6 +17,14 @@ func (l *LeaderElection) SetConn(conn *zk.Conn) {
 	l.conn = conn
 }
 
+func (l *LeaderElection) CloseConn() {
+	l.conn.Close()
+}
+
 func (l *LeaderElection) DefaultConfig() {
 	l.defaultConfig()
+}
+
+func (l *LeaderElection) SetWatcher(watcher <-chan zk.Event) {
+	l.connectionWatcher = watcher
 }

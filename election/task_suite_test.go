@@ -49,10 +49,8 @@ func defaultLeaderElection() *election.LeaderElection {
 	return election
 }
 
-func createCandidates(number int) ([]*election.LeaderElection, []*zk.Conn, []<-chan zk.Event) {
+func createCandidates(number int) []*election.LeaderElection {
 	var candidates []*election.LeaderElection
-	var connections []*zk.Conn
-	var connectionWatcher []<-chan zk.Event
 	var candidate *election.LeaderElection
 	var connection *zk.Conn
 	var watcher <-chan zk.Event
@@ -64,10 +62,9 @@ func createCandidates(number int) ([]*election.LeaderElection, []*zk.Conn, []<-c
 			panic(err)
 		}
 		candidate.SetConn(connection)
+		candidate.SetWatcher(watcher)
 		candidates = append(candidates, candidate)
-		connections = append(connections, connection)
-		connectionWatcher = append(connectionWatcher, watcher)
 		number -= 1
 	}
-	return candidates, connections, connectionWatcher
+	return candidates
 }
