@@ -44,19 +44,25 @@ type LeaderElection struct {
 	watchPredecessor <-chan zk.Event
 }
 
-// Elect starts the leader election process based on the configuration provided in the struct
-func (l *LeaderElection) StartElectionLoop() error {
+// preElection is a function that will be called before the election loop starts
+// it will initialize default configs, validate the configs, and connect to zookeeper
+// it will set the conn and connectionWatcher fields
+// it will return an error if any of the steps fail
+func (l *LeaderElection) preElection() error {
 	var err error
 	// perform validation on the configuration
+	l.defaultConfig()
 	err = l.validateConfig()
 	if err != nil {
 		return err
 	}
-	l.defaultConfig()
-	l.Log.Info().Msg("Starting leader election loop")
 	// establsih connection to zookeeper, if it fails, the function will return
 	// if the connection is lost at any point after a succesful connection, it will infinitely try to reconnect
 	l.Log.Info().Msg("Connecting to zookeeper")
+	if l.conn != nil {
+		l.conn.Close()
+		l.connectionWatcher = nil
+	}
 	l.conn, l.connectionWatcher, err = zk.Connect(l.Zookeepers, l.ZkTimeout)
 	if err != nil {
 		l.Log.Info().Err(err).Msg("Failed connecting to zookeeper")
@@ -73,39 +79,105 @@ func (l *LeaderElection) StartElectionLoop() error {
 		l.Log.Info().Msg("Namespace does not exist. You must create it")
 		return err
 	}
+	return nil
+}
+
+// StartElectionLoopWithoutFailureReties starts the leader election process based on the configuration provided in the struct
+// if any function fails, it will return an error and will not attempt to reelect new leader.
+// Note that this does not mean that the loss of leadership will cause the loop to stop.
+// It will continue to run normally and attempt
+// This is useful if you want to handle the failure yourself
+// If you want the election to retry, use StartElectionLoopWithFailureRetries
+func (l *LeaderElection) StartElectionLoopWithoutFailureReties() error {
+	err := l.preElection()
+	if err != nil {
+		return err
+	}
 	// start the leader election routine
 	go func(l *LeaderElection) {
 		// defer closing the connection
 		defer l.conn.Close()
+		defer l.Cancel()
+		// start the election loop
+
+		l.Log.Info().Msg("Volunteering for candidate")
+		err = l.candidate()
+		if err != nil {
+			l.Log.Info().Err(err).Msg("Failed to volunteer for candidate")
+			return
+		}
+		err = l.reelectLeader()
+		if err != nil {
+			l.Log.Info().Err(err).Msg("Failed to re-elect leader")
+			return
+		}
+		err = l.processEvents()
+		if err != nil {
+			l.Log.Info().Err(err).Msg("Failed to process events")
+			return
+		}
+		l.Log.Info().Msg("Context cancelled. Exiting")
+	}(l)
+	return nil
+}
+
+// StartElectionLoop starts the leader election process based on the configuration provided in the struct
+func (l *LeaderElection) StartElectionLoopWithFailureRetries() error {
+	var err error
+	err = l.preElection()
+	if err != nil {
+		l.Log.Info().Err(err).Msg("Failed to preform pre-election tasks")
+		return err
+	}
+	firstRun := true
+	// start the leader election routine
+	go func(l *LeaderElection) {
+		// defer closing the connection
+		defer l.conn.Close()
+		defer l.Cancel()
 		var nextBackOff time.Duration
 		var lastretryTime time.Time
 		// start the election loop
+		l.Log.Info().Msg("Starting leader election loop")
 		for {
 			// reset the backoff if we haven't failed in a while
 			if time.Since(lastretryTime) > 10*time.Minute {
 				l.Backoff.Reset()
 			}
 			// wait for the next retry using the randomized exponential backoff with jitter
-			// minimum is l.ZkTimeout to allow for any sessions to expire
-			nextBackOff = l.ZkTimeout + l.Backoff.NextBackOff()
+			nextBackOff = l.Backoff.NextBackOff()
 			lastretryTime = time.Now()
 			l.Log.Info().Msgf("Time for next attempt %s", nextBackOff)
 			select {
 			case <-l.Ctx.Done():
+				l.Log.Info().Msg("Context cancelled. Exiting")
+				l.IsLeader = false
 				return
 			case <-time.NewTicker(nextBackOff).C:
+				if !firstRun {
+					l.Log.Info().Msg("Retrying election")
+					err = l.preElection()
+					if err != nil {
+						l.Log.Log().Err(err).Msg("Failed to preform pre-election tasks %s")
+						continue
+					}
+				}
+				firstRun = false
 				l.Log.Info().Msg("Volunteering for candidate")
 				err = l.candidate()
 				if err != nil {
-					l.Log.Info().Err(err).Msgf("Failed to volunteer for candidate %s", err.Error())
+					l.Log.Info().Err(err).Msg("Failed to volunteer for candidate")
+					continue
 				}
 				err = l.reelectLeader()
 				if err != nil {
-					l.Log.Info().Err(err).Msgf("Failed to re-elect leader %s", err.Error())
+					l.Log.Info().Err(err).Msg("Failed to re-elect leader")
+					continue
 				}
 				err = l.processEvents()
 				if err != nil {
-					l.Log.Info().Err(err).Msgf("Failed to process events %s", err.Error())
+					l.Log.Info().Err(err).Msg("Failed to process events")
+					continue
 				}
 			}
 		}
@@ -142,6 +214,7 @@ func (l *LeaderElection) reelectLeader() error {
 		children, _, err = l.conn.Children(l.ZkNamespace)
 		if err != nil {
 			l.Log.Info().Err(err).Msg("Failed to get children")
+			l.IsLeader = false
 			return err
 		}
 		sort.Strings(children)

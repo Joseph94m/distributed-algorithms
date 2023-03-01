@@ -40,17 +40,44 @@ var _ = Describe("Election", func() {
 			panic(err)
 		}
 	})
-	Describe("One running instance and default values", func() {
+
+	Describe("One running instance and default values StartElectionLoopWithoutFailureReties", func() {
 		BeforeEach(func() {
 			// define the struct
 			leaderElection = defaultLeaderElection()
 			// start the loop with cancel context
-			err = leaderElection.StartElectionLoop()
+			err = leaderElection.StartElectionLoopWithoutFailureReties()
 			if err != nil {
 				panic(err)
 			}
 			//timer To wait before checking the znode
-			<-time.After(Timeout + Timeout)
+			<-time.After(Timeout)
+		})
+		AfterEach(func() {
+			leaderElection.Cancel()
+		})
+		It("running instance should become the leader", func() {
+			//connect to zookeeper, get znode children and verify that size is 1
+			children, _, err := conn.Children(Namespace)
+			if err != nil {
+				panic(err)
+			}
+			Expect(len(children)).To(Equal(1))
+			Expect(leaderElection.IsLeader).To(BeTrue())
+		})
+	})
+
+	Describe("One running instance and default values StartElectionLoopWithoutFailureRetries", func() {
+		BeforeEach(func() {
+			// define the struct
+			leaderElection = defaultLeaderElection()
+			// start the loop with cancel context
+			err = leaderElection.StartElectionLoopWithFailureRetries()
+			if err != nil {
+				panic(err)
+			}
+			//timer To wait before checking the znode
+			<-time.After(Timeout)
 		})
 		AfterEach(func() {
 			leaderElection.Cancel()
@@ -272,7 +299,7 @@ var _ = Describe("Election", func() {
 				}
 			}
 			// wait for a new leader to be elected and wait for session timeout
-			<-time.After(Timeout + Timeout)
+			<-time.After(Timeout)
 			// verify that there is a new leader
 
 			children, _, err = conn.Children(Namespace)
@@ -360,7 +387,7 @@ var _ = Describe("Election", func() {
 				}
 				newCandidates = tmpCandidates
 				// wait for a new leader to be elected and wait for session timeout
-				<-time.After(Timeout + Timeout)
+				<-time.After(Timeout)
 				// verify that there is a new leader
 
 				children, _, err = conn.Children(Namespace)

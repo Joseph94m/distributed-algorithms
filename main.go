@@ -28,7 +28,7 @@ func main() {
 	if err != nil && err != zk.ErrNodeExists {
 		panic(err)
 	}
-	leaderElection.StartElectionLoop()
+	leaderElection.StartElectionLoopWithFailureRetries()
 	ticker := time.NewTicker(time.Second * 5)
 	tickerCancel := time.NewTicker(time.Second * 20)
 	go func() {
