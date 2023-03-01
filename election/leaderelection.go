@@ -30,6 +30,10 @@ type LeaderElection struct {
 	// The default value is an exponential backoff with a max elapsed time of 0 so it will retry forever
 	// Only the default value is tested
 	Backoff backoff.BackOff
+	// Cancel is the cancel function for the context that will be used to cancel the election loop. You can safely use it to cancel the loop
+	Cancel context.CancelFunc
+	// ctx is the context that will be used to cancel the election loop
+	ctx context.Context
 	// conn is the zookeeper connection and is shared across the functions
 	conn *zk.Conn
 	// connectionWatcher is the channel that will be used to watch for connection events
@@ -41,7 +45,7 @@ type LeaderElection struct {
 }
 
 // Elect starts the leader election process based on the configuration provided in the struct
-func (l *LeaderElection) StartElectionLoop(ctx context.Context) error {
+func (l *LeaderElection) StartElectionLoop() error {
 	var err error
 	// perform validation on the configuration
 	err = l.validateConfig()
@@ -70,7 +74,7 @@ func (l *LeaderElection) StartElectionLoop(ctx context.Context) error {
 		return err
 	}
 	// start the leader election routine
-	go func(l *LeaderElection, ctx context.Context) {
+	go func(l *LeaderElection) {
 		// defer closing the connection
 		defer l.conn.Close()
 		var nextBackOff time.Duration
@@ -87,7 +91,7 @@ func (l *LeaderElection) StartElectionLoop(ctx context.Context) error {
 			lastretryTime = time.Now()
 			l.Log.Info().Msgf("Time for next attempt %s", nextBackOff)
 			select {
-			case <-ctx.Done():
+			case <-l.ctx.Done():
 				return
 			case <-time.NewTicker(nextBackOff).C:
 				l.Log.Info().Msg("Volunteering for candidate")
@@ -105,7 +109,7 @@ func (l *LeaderElection) StartElectionLoop(ctx context.Context) error {
 				}
 			}
 		}
-	}(l, ctx)
+	}(l)
 	return nil
 }
 
@@ -178,6 +182,9 @@ func (l *LeaderElection) processEvents() error {
 	l.Log.Info().Msg("Processing events")
 	for {
 		select {
+		case <-l.ctx.Done():
+			l.IsLeader = false
+			return nil
 		case event := <-l.watchPredecessor:
 			l.Log.Info().Msgf("Received event from predecessor %v", event)
 			if event.Type == zk.EventNodeDeleted {
@@ -192,8 +199,17 @@ func (l *LeaderElection) processEvents() error {
 			l.Log.Info().Msgf("Received event from connection watcher %v", event)
 			if event.State == zk.StateDisconnected {
 				l.Log.Info().Msg("Disconnected")
+				l.IsLeader = false
 				return nil
 			}
+			//TODO: if I manually delete the current node's znode, it will not trigger an event in the connectionWatcher channel
+			// but for some reason it will trigger an event in the watchPredecessor channel
+			// check if current node's znode has been delete event
+			// the following code does not yet fix the problem but we must find it
+			// if event.Type == zk.EventNodeDeleted && event.Path == l.ZkNamespace+"/"+l.currentZnodeName {
+			// 	l.Log.Info().Msg("Current node's znode deleted")
+			// 	return nil
+			// }
 		}
 	}
 }
