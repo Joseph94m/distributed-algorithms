@@ -156,7 +156,7 @@ var _ = Describe("Election", func() {
 		})
 	})
 
-	Describe("Run 1 candidates function and follow it with a re-elect. Node should become leader", func() {
+	Describe("Run 1 candidate function and follow it with a re-elect. Node should become leader", func() {
 		BeforeEach(func() {
 			// define the struct
 			candidateCount = 1
